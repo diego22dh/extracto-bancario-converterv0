@@ -4,29 +4,32 @@ import PyPDF2
 import pdfplumber
 import os
 from datetime import datetime
+import streamlit as st
+import tempfile
+from io import BytesIO
 
-def extraer_texto_de_pdf(ruta_pdf, metodo="pdfplumber"):
+def extraer_texto_de_pdf(archivo_pdf, metodo="pdfplumber"):
     """Extrae el texto completo de un archivo PDF usando el método especificado"""
     if metodo == "pdfplumber":
         try:
             texto_completo = ""
-            with pdfplumber.open(ruta_pdf) as pdf:
+            with pdfplumber.open(archivo_pdf) as pdf:
                 for pagina in pdf.pages:
                     texto_completo += pagina.extract_text() + "\n"
             return texto_completo
         except Exception as e:
-            print(f"Error al leer el PDF con pdfplumber: {e}")
+            st.error(f"Error al leer el PDF con pdfplumber: {e}")
             return None
     else:  # PyPDF2 como respaldo
         try:
             texto_completo = ""
-            with open(ruta_pdf, 'rb') as archivo:
+            with open(archivo_pdf, 'rb') as archivo:
                 lector_pdf = PyPDF2.PdfReader(archivo)
                 for pagina in lector_pdf.pages:
                     texto_completo += pagina.extract_text() + "\n"
             return texto_completo
         except Exception as e:
-            print(f"Error al leer el PDF con PyPDF2: {e}")
+            st.error(f"Error al leer el PDF con PyPDF2: {e}")
             return None
 
 def limpiar_valor_numerico(valor_str):
@@ -229,11 +232,11 @@ def procesar_extracto_galicia(texto):
     
     return movimientos
 
-def guardar_excel(transacciones, ruta_salida):
-    """Guarda las transacciones en un archivo Excel"""
+def guardar_excel(transacciones):
+    """Convierte las transacciones en un DataFrame para mostrar y descargar"""
     if not transacciones:
-        print("No se encontraron transacciones para guardar")
-        return False
+        st.error("No se encontraron transacciones para guardar")
+        return None
     
     # Crea un DataFrame con los datos
     df = pd.DataFrame(transacciones)
@@ -256,57 +259,92 @@ def guardar_excel(transacciones, ruta_salida):
     # Ordena por fecha (descendente) y saldo
     df = df.sort_values(by=["fecha", "saldo"], ascending=[False, False])
     
-    # Guarda el DataFrame en un archivo Excel
-    df.to_excel(ruta_salida, index=False)
-    print(f"Archivo Excel guardado exitosamente en: {ruta_salida}")
-    return True
+    return df
 
-def main():
-    # Solicitar la ruta del archivo PDF
-    ruta_pdf = input("Ingrese la ruta del archivo PDF del extracto bancario: ")
-        
-    if not os.path.exists(ruta_pdf):
-        print(f"El archivo {ruta_pdf} no existe.")
-        return
-    
-    # Solicitar el tipo de banco
-    while True:
-        
-        banco = input("Seleccione el banco (Provincia/Galicia): ").strip().lower()        
-        if banco in ["provincia", "galicia"]:
-            break
-        print("Por favor, ingrese 'Provincia' o 'Galicia'.")
-    
-    # Extraer texto del PDF usando pdfplumber (mejor para estructuras complejas)
-    texto = extraer_texto_de_pdf(ruta_pdf, "pdfplumber")
-    
-    if not texto:
-        print("Error al extraer texto con pdfplumber, intentando con PyPDF2...")
-        texto = extraer_texto_de_pdf(ruta_pdf, "pypdf2")
-    
-    if not texto:
-        print("No se pudo extraer texto del PDF.")
-        return
-    
-    # Procesar el extracto según el banco seleccionado
-    print(f"Procesando extracto del Banco {banco.capitalize()}...")
-    if banco == "provincia":
-        transacciones = procesar_extracto_provincia(texto)
-    else:  # banco == "galicia"
-        transacciones = procesar_extracto_galicia(texto)
-    
-    if not transacciones:
-        print(f"No se encontraron transacciones en el extracto del Banco {banco.capitalize()}.")
-        return
-    
-    print(f"Se encontraron {len(transacciones)} transacciones.")
-    
-    # Determinar la ruta de salida del archivo Excel
-    nombre_base = os.path.splitext(os.path.basename(ruta_pdf))[0]
-    ruta_salida = os.path.join(os.path.dirname(ruta_pdf), f"{nombre_base}_{banco}_procesado.xlsx")
-    
-    # Guardar en Excel
-    guardar_excel(transacciones, ruta_salida)
+# Configurar la página de Streamlit
+st.set_page_config(page_title="Procesador de Extractos Bancarios", layout="wide")
 
-if __name__ == "__main__":
-    main()
+# Título de la aplicación
+st.title("Procesador de Extractos Bancarios")
+
+# Crear un sidebar para las opciones
+st.sidebar.header("Configuración")
+
+# Selección del tipo de banco
+banco = st.sidebar.selectbox(
+    "Seleccione el banco",
+    options=["Provincia", "Galicia"],
+    index=0
+)
+
+# Subida de archivo
+archivo_pdf = st.sidebar.file_uploader("Seleccione el extracto bancario en PDF", type=["pdf"])
+
+# Inicializar la sesión si no existe
+if 'procesado' not in st.session_state:
+    st.session_state.procesado = False
+    st.session_state.transacciones = None
+    st.session_state.df = None
+
+# Botón para procesar
+if st.sidebar.button("Procesar Extracto"):
+    if archivo_pdf is not None:
+        # Notificar el inicio del procesamiento
+        with st.spinner(f"Procesando extracto del Banco {banco}..."):
+            # Crear un archivo temporal para el PDF
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
+                temp_pdf.write(archivo_pdf.getvalue())
+                temp_pdf_path = temp_pdf.name
+                
+            # Extraer texto del PDF
+            texto = extraer_texto_de_pdf(temp_pdf_path, "pdfplumber")
+            
+            if not texto:
+                st.error("Error al extraer texto con pdfplumber, intentando con PyPDF2...")
+                texto = extraer_texto_de_pdf(temp_pdf_path, "pypdf2")
+            
+            if not texto:
+                st.error("No se pudo extraer texto del PDF.")
+            else:
+                # Procesar según el banco seleccionado
+                if banco == "Provincia":
+                    transacciones = procesar_extracto_provincia(texto)
+                else:  # banco == "Galicia"
+                    transacciones = procesar_extracto_galicia(texto)
+                
+                # Limpiar el archivo temporal
+                os.unlink(temp_pdf_path)
+                
+                if not transacciones:
+                    st.error(f"No se encontraron transacciones en el extracto del Banco {banco}.")
+                else:
+                    st.session_state.procesado = True
+                    st.session_state.transacciones = transacciones
+                    st.session_state.df = guardar_excel(transacciones)
+                    st.success(f"Se encontraron {len(transacciones)} transacciones.")
+    else:
+        st.error("Por favor, suba un archivo PDF primero.")
+
+# Mostrar resultados si hay transacciones procesadas
+if st.session_state.procesado and st.session_state.df is not None:
+    st.header("Transacciones Encontradas")
+    
+    # Mostrar DataFrame
+    st.dataframe(st.session_state.df)
+        # Crear un objeto BytesIO para guardar el Excel
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        st.session_state.df.to_excel(writer, index=False)
+    output.seek(0)
+
+    st.download_button(
+        label="Descargar Excel",
+        data=output,
+        file_name=f"extracto_{banco.lower()}_procesado.xlsx",
+        mime="application/vnd.ms-excel"
+    )
+    
+    
+else:
+    # Instrucciones iniciales
+    st.info("Sube un extracto bancario en PDF y selecciona el banco para comenzar.")
