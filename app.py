@@ -1,23 +1,9 @@
-import re
-import pandas as pd
-import PyPDF2
-import os
-from datetime import datetime
 import streamlit as st
+import PyPDF2
+import pandas as pd
+import re
 import io
-
-def extraer_texto_de_pdf(ruta_pdf):
-    """Extrae el texto completo de un archivo PDF"""
-    texto_completo = ""
-    try:
-        with open(ruta_pdf, 'rb') as archivo:
-            lector_pdf = PyPDF2.PdfReader(archivo)
-            for pagina in lector_pdf.pages:
-                texto_completo += pagina.extract_text()
-        return texto_completo
-    except Exception as e:
-        print(f"Error al leer el PDF: {e}")
-        return None
+from datetime import datetime
 
 def extraer_texto_de_pdf(archivo_pdf):
     """Extrae el texto completo de un archivo PDF subido por Streamlit"""
@@ -33,11 +19,7 @@ def extraer_texto_de_pdf(archivo_pdf):
 
 def procesar_extracto_provincia(texto):
     """Procesa el texto del extracto del Banco Provincia y extrae las transacciones"""
-    # Patrón para encontrar líneas de transacciones
-    # Formato: DD-MM-YY DESCRIPCION IMPORTE DD-MM SALDO
     patron = r"(\d{2}-\d{2}-\d{2})\s+(.*?)\s+([-]?\d+(?:\.\d+)?(?:,\d+)?)\s+(\d{2}-\d{2})\s+([-]?\d+(?:\.\d+)?(?:,\d+)?)"
-    
-    # Patrón alternativo para líneas sin fecha (continuación de descripciones)
     patron_alt = r"^(\s+)(.+?)\s+([-]?\d+(?:\.\d+)?(?:,\d+)?)\s+(\d{2}-\d{2})\s+([-]?\d+(?:\.\d+)?(?:,\d+)?)"
     
     transacciones = []
@@ -45,161 +27,26 @@ def procesar_extracto_provincia(texto):
     ultima_fecha = None
     
     for linea in lineas:
-        # Intenta encontrar líneas de transacciones principales
+        linea = linea.strip()
+        if not linea:
+            continue
+            
         coincidencia = re.search(patron, linea)
         if coincidencia:
-            fecha, descripcion, importe, fecha_valor, saldo = coincidencia.groups()
-            
-            # Limpia la descripción eliminando espacios múltiples
-            descripcion = re.sub(r'\s+', ' ', descripcion.strip())
-            
-            # Procesa el importe para determinar si es débito o crédito
-            importe = importe.replace(".", "").replace(",", ".")
-            try:
-                importe_num = float(importe)
-                tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
-                # Para débitos, verificamos si ya tiene signo negativo
-                if tipo_movimiento == "Débito" and not importe.startswith('-'):
-                    importe_num = -importe_num
-            except ValueError:
-                importe_num = 0
-                tipo_movimiento = "Indeterminado"
-            importe = importe.replace(".", "").replace(",", ".")
-            try:
-                importe_num = float(importe)
-                tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
-                # Para débitos, verificamos si ya tiene signo negativo
-                if tipo_movimiento == "Débito" and not importe.startswith('-'):
-                    importe_num = -importe_num
-            except ValueError:
-                importe_num = 0
-                tipo_movimiento = "Indeterminado"
-            
-            # Procesa el saldo
-            saldo = saldo.replace(".", "").replace(",", ".")
-            saldo = saldo.replace(".", "").replace(",", ".")
-            
-            # Guarda la fecha actual para posibles continuaciones
+            fecha, descripcion, importe, _, saldo = coincidencia.groups()
             ultima_fecha = fecha
-            
-            # Extrae detalle (si existe)
-            detalle = ""
-            if "-" in descripcion and descripcion.count("-") >= 1:
-                partes = descripcion.split("-", 1)
-                descripcion = partes[0].strip()
-                if len(partes) > 1:
-                    detalle = partes[1].strip()
-            
-            # Extrae detalle (si existe)
-            detalle = ""
-            if "-" in descripcion and descripcion.count("-") >= 1:
-                partes = descripcion.split("-", 1)
-                descripcion = partes[0].strip()
-                if len(partes) > 1:
-                    detalle = partes[1].strip()
-            
             transacciones.append({
                 "fecha": fecha,
-                "descripcion": descripcion,
-                "detalle": detalle,
-                "importe": importe_num,
-                "saldo": float(saldo),
-                "tipo_movimiento": tipo_movimiento
+                "descripcion": descripcion.strip(),
+                "importe": float(importe.replace(",", ".")),
+                "saldo": float(saldo.replace(",", "."))
             })
-        else:
-            # Busca líneas alternativas (sin fecha)
-            coincidencia_alt = re.search(patron_alt, linea)
-            if coincidencia_alt and ultima_fecha:
-                espacios, descripcion, importe, fecha_valor, saldo = coincidencia_alt.groups()
-                
-                # Limpia la descripción
-                descripcion = re.sub(r'\s+', ' ', descripcion.strip())
-                
-                # Procesa el importe para determinar si es débito o crédito
-                importe = importe.replace(".", "").replace(",", ".")
-                try:
-                    importe_num = float(importe)
-                    tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
-                    # Para débitos, verificamos si ya tiene signo negativo
-                    if tipo_movimiento == "Débito" and not importe.startswith('-'):
-                        importe_num = -importe_num
-                except ValueError:
-                    importe_num = 0
-                    tipo_movimiento = "Indeterminado"
-                
-                # Procesa el saldo
-                saldo = saldo.replace(".", "").replace(",", ".")
-                
-                # Extrae detalle (si existe)
-                detalle = ""
-                if "-" in descripcion and descripcion.count("-") >= 1:
-                    partes = descripcion.split("-", 1)
-                    descripcion = partes[0].strip()
-                    if len(partes) > 1:
-                        detalle = partes[1].strip()
-                
-                transacciones.append({
-                    "fecha": ultima_fecha,
-                    "descripcion": descripcion,
-                    "detalle": detalle,
-                    "importe": importe_num,
-                    "saldo": float(saldo),
-                    "tipo_movimiento": tipo_movimiento
-                })
-                "saldo": float(saldo),
-                "tipo_movimiento": tipo_movimiento
-            })
-        else:
-            # Busca líneas alternativas (sin fecha)
-            coincidencia_alt = re.search(patron_alt, linea)
-            if coincidencia_alt and ultima_fecha:
-                espacios, descripcion, importe, fecha_valor, saldo = coincidencia_alt.groups()
-                
-                # Limpia la descripción
-                descripcion = re.sub(r'\s+', ' ', descripcion.strip())
-                
-                # Procesa el importe para determinar si es débito o crédito
-                importe = importe.replace(".", "").replace(",", ".")
-                try:
-                    importe_num = float(importe)
-                    tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
-                    # Para débitos, verificamos si ya tiene signo negativo
-                    if tipo_movimiento == "Débito" and not importe.startswith('-'):
-                        importe_num = -importe_num
-                except ValueError:
-                    importe_num = 0
-                    tipo_movimiento = "Indeterminado"
-                
-                # Procesa el saldo
-                saldo = saldo.replace(".", "").replace(",", ".")
-                
-                # Extrae detalle (si existe)
-                detalle = ""
-                if "-" in descripcion and descripcion.count("-") >= 1:
-                    partes = descripcion.split("-", 1)
-                    descripcion = partes[0].strip()
-                    if len(partes) > 1:
-                        detalle = partes[1].strip()
-                
-                transacciones.append({
-                    "fecha": ultima_fecha,
-                    "descripcion": descripcion,
-                    "detalle": detalle,
-                    "importe": importe_num,
-                    "saldo": float(saldo),
-                    "tipo_movimiento": tipo_movimiento
-                })
-    
+            
     return transacciones
 
 def procesar_extracto_galicia(texto):
     """Procesa el texto del extracto del Banco Galicia y extrae las transacciones"""
-    # Patrón más flexible para el Banco Galicia
     patron = r"(\d{2}/\d{2}/\d{2,4})\s+(.*?)\s+([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)"
-    
-    # Añadir debug
-    st.write("### Debugging texto extraído:")
-    st.text(texto[:500])  # Muestra los primeros 500 caracteres
     
     transacciones = []
     lineas = texto.split('\n')
@@ -264,15 +111,12 @@ def guardar_excel(transacciones, ruta_salida):
         try:
             # Intenta varios formatos de fecha
             for formato in ["%d-%m-%y", "%d/%m/%Y"]:
-            for formato in ["%d-%m-%y", "%d/%m/%Y"]:
                 try:
                     return datetime.strptime(fecha_str, formato).strftime("%d/%m/%Y")
-                except:
-                except:
+                except ValueError:
                     continue
             return fecha_str
-        except:
-        except:
+        except Exception:
             return fecha_str
     
     df["fecha"] = df["fecha"].apply(reformatear_fecha)
