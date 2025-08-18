@@ -4,6 +4,20 @@ import PyPDF2
 import os
 from datetime import datetime
 import streamlit as st
+import io
+
+def extraer_texto_de_pdf(ruta_pdf):
+    """Extrae el texto completo de un archivo PDF"""
+    texto_completo = ""
+    try:
+        with open(ruta_pdf, 'rb') as archivo:
+            lector_pdf = PyPDF2.PdfReader(archivo)
+            for pagina in lector_pdf.pages:
+                texto_completo += pagina.extract_text()
+        return texto_completo
+    except Exception as e:
+        print(f"Error al leer el PDF: {e}")
+        return None
 
 def extraer_texto_de_pdf(archivo_pdf):
     """Extrae el texto completo de un archivo PDF subido por Streamlit"""
@@ -14,7 +28,7 @@ def extraer_texto_de_pdf(archivo_pdf):
             texto_completo += pagina.extract_text()
         return texto_completo
     except Exception as e:
-        print(f"Error al leer el PDF: {e}")
+        st.error(f"Error al leer el PDF: {e}")
         return None
 
 def procesar_extracto_provincia(texto):
@@ -118,44 +132,50 @@ def procesar_extracto_provincia(texto):
 
 def procesar_extracto_galicia(texto):
     """Procesa el texto del extracto del Banco Galicia y extrae las transacciones"""
-    # Patrón para encontrar líneas de transacciones en el formato del Banco Galicia
-    # Adapta este patrón según el formato real de los extractos del Galicia
-    patron = r"(\d{2}/\d{2}/\d{4})\s+(.*?)\s+([-]?\d+(?:\.\d+)?(?:,\d+)?)\s+([-]?\d+(?:\.\d+)?(?:,\d+)?)"
+    # Patrón más flexible para el Banco Galicia
+    patron = r"(\d{2}/\d{2}/\d{2,4})\s+(.*?)\s+([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)"
+    
+    # Añadir debug
+    st.write("### Debugging texto extraído:")
+    st.text(texto[:500])  # Muestra los primeros 500 caracteres
     
     transacciones = []
     lineas = texto.split('\n')
     
     for linea in lineas:
+        # Limpiar la línea
+        linea = linea.strip()
+        if not linea:
+            continue
+            
         # Intenta encontrar líneas de transacciones
         coincidencia = re.search(patron, linea)
         if coincidencia:
             fecha, descripcion, importe, saldo = coincidencia.groups()
             
-            # Limpia la descripción eliminando espacios múltiples
+            # Normalizar fecha
+            if len(fecha.split('/')[2]) == 2:
+                fecha = fecha.replace('/', '-')
+            
+            # Limpia y normaliza la descripción
             descripcion = re.sub(r'\s+', ' ', descripcion.strip())
             
-            # Procesa el importe para determinar si es débito o crédito
+            # Procesa importes
             importe = importe.replace(".", "").replace(",", ".")
+            saldo = saldo.replace(".", "").replace(",", ".")
+            
             try:
                 importe_num = float(importe)
                 tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
-                # Para débitos, verificamos si ya tiene signo negativo
-                if tipo_movimiento == "Débito" and not importe.startswith('-'):
-                    importe_num = -importe_num
             except ValueError:
-                importe_num = 0
-                tipo_movimiento = "Indeterminado"
+                continue  # Salta líneas con importes inválidos
             
-            # Procesa el saldo
-            saldo = saldo.replace(".", "").replace(",", ".")
-            
-            # Extrae detalle (si existe)
+            # Extrae detalle si existe
             detalle = ""
-            if "-" in descripcion and descripcion.count("-") >= 1:
-                partes = descripcion.split("-", 1)
+            if " - " in descripcion:
+                partes = descripcion.split(" - ", 1)
                 descripcion = partes[0].strip()
-                if len(partes) > 1:
-                    detalle = partes[1].strip()
+                detalle = partes[1].strip() if len(partes) > 1 else ""
             
             transacciones.append({
                 "fecha": fecha,
@@ -201,41 +221,58 @@ def guardar_excel(transacciones, ruta_salida):
     return True
 
 def main():
-    st.title("Extracto Bancario Converter")
-    st.write("Convierte tu extracto bancario PDF a Excel")
+    st.title("Conversor de Extractos Bancarios")
+    st.write("Convierte extractos bancarios PDF a Excel")
 
-    uploaded_file = st.file_uploader("Sube el archivo PDF del extracto bancario", type=["pdf"])
-    banco = st.selectbox("Selecciona el banco", ["Provincia", "Galicia"])
+    # Subida del archivo y selector de banco
+    uploaded_file = st.file_uploader("Sube el extracto bancario en PDF", type=["pdf"])
+    banco = st.selectbox("Selecciona el banco", ["Provincia", "Galicia"]).lower()
 
     if uploaded_file is not None:
         texto = extraer_texto_de_pdf(uploaded_file)
-        if not texto:
-            st.error("No se pudo extraer texto del PDF.")
-            return
+        
+        if texto:
+            # Procesar según el banco
+            transacciones = procesar_extracto_provincia(texto) if banco == "provincia" else procesar_extracto_galicia(texto)
+            
+            if transacciones:
+                # Crear DataFrame
+                df = pd.DataFrame(transacciones)
+                
+                # Mostrar vista previa
+                st.write("### Vista previa de las transacciones:")
+                st.dataframe(df)
+                
+                # Preparar Excel para descarga
+                buffer = io.BytesIO()
+                
+                # Usar ExcelWriter con formato específico
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df.to_excel(writer, sheet_name='Transacciones', index=False)
+                    # Obtener la hoja activa
+                    worksheet = writer.sheets['Transacciones']
+                    # Ajustar anchos de columna
+                    for idx, col in enumerate(df.columns):
+                        max_length = max(df[col].astype(str).apply(len).max(),
+                                       len(col)) + 2
+                        worksheet.column_dimensions[chr(65 + idx)].width = max_length
 
-        if banco.lower() == "provincia":
-            transacciones = procesar_extracto_provincia(texto)
+                # Crear botón de descarga
+                nombre_excel = f"extracto_{banco}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                
+                st.download_button(
+                    label="📥 Descargar Excel",
+                    data=buffer.getvalue(),
+                    file_name=nombre_excel,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Haz clic para descargar el archivo Excel con las transacciones procesadas"
+                )
+                
+                st.success(f"✅ Archivo {nombre_excel} listo para descargar")
+            else:
+                st.error(f"❌ No se encontraron transacciones en el extracto del Banco {banco.capitalize()}")
         else:
-            transacciones = procesar_extracto_galicia(texto)
-
-        if not transacciones:
-            st.error(f"No se encontraron transacciones en el extracto del Banco {banco}.")
-            return
-
-        df = pd.DataFrame(transacciones)
-        st.dataframe(df)
-
-        nombre_base = os.path.splitext(uploaded_file.name)[0]
-        ruta_salida = f"{nombre_base}_{banco.lower()}_procesado.xlsx"
-        df.to_excel(ruta_salida, index=False)
-
-        with open(ruta_salida, "rb") as f:
-            st.download_button(
-                label="Descargar Excel procesado",
-                data=f,
-                file_name=ruta_salida,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.error("❌ No se pudo extraer texto del PDF")
 
 if __name__ == "__main__":
     main()
