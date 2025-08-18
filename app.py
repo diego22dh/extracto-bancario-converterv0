@@ -133,9 +133,17 @@ def main():
     st.title("Conversor de Extractos Bancarios")
     st.write("Convierte extractos bancarios PDF a Excel")
 
-    # Subida del archivo y selector de banco
-    uploaded_file = st.file_uploader("Sube el extracto bancario en PDF", type=["pdf"])
-    banco = st.selectbox("Selecciona el banco", ["Provincia", "Galicia"]).lower()
+    # Agregar key única al file_uploader
+    uploaded_file = st.file_uploader(
+        "Sube el extracto bancario en PDF", 
+        type=["pdf"],
+        key="extracto_bancario_upload"
+    )
+    banco = st.selectbox(
+        "Selecciona el banco", 
+        ["Provincia", "Galicia"],
+        key="selector_banco"
+    ).lower()
 
     if uploaded_file is not None:
         texto = extraer_texto_de_pdf(uploaded_file)
@@ -184,5 +192,4 @@ def main():
             st.error("❌ No se pudo extraer texto del PDF")
 
 if __name__ == "__main__":
-    main()
     main()
