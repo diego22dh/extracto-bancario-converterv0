@@ -64,12 +64,31 @@ def procesar_extracto_provincia(texto):
             except ValueError:
                 importe_num = 0
                 tipo_movimiento = "Indeterminado"
+            importe = importe.replace(".", "").replace(",", ".")
+            try:
+                importe_num = float(importe)
+                tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
+                # Para débitos, verificamos si ya tiene signo negativo
+                if tipo_movimiento == "Débito" and not importe.startswith('-'):
+                    importe_num = -importe_num
+            except ValueError:
+                importe_num = 0
+                tipo_movimiento = "Indeterminado"
             
             # Procesa el saldo
+            saldo = saldo.replace(".", "").replace(",", ".")
             saldo = saldo.replace(".", "").replace(",", ".")
             
             # Guarda la fecha actual para posibles continuaciones
             ultima_fecha = fecha
+            
+            # Extrae detalle (si existe)
+            detalle = ""
+            if "-" in descripcion and descripcion.count("-") >= 1:
+                partes = descripcion.split("-", 1)
+                descripcion = partes[0].strip()
+                if len(partes) > 1:
+                    detalle = partes[1].strip()
             
             # Extrae detalle (si existe)
             detalle = ""
@@ -84,6 +103,49 @@ def procesar_extracto_provincia(texto):
                 "descripcion": descripcion,
                 "detalle": detalle,
                 "importe": importe_num,
+                "saldo": float(saldo),
+                "tipo_movimiento": tipo_movimiento
+            })
+        else:
+            # Busca líneas alternativas (sin fecha)
+            coincidencia_alt = re.search(patron_alt, linea)
+            if coincidencia_alt and ultima_fecha:
+                espacios, descripcion, importe, fecha_valor, saldo = coincidencia_alt.groups()
+                
+                # Limpia la descripción
+                descripcion = re.sub(r'\s+', ' ', descripcion.strip())
+                
+                # Procesa el importe para determinar si es débito o crédito
+                importe = importe.replace(".", "").replace(",", ".")
+                try:
+                    importe_num = float(importe)
+                    tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
+                    # Para débitos, verificamos si ya tiene signo negativo
+                    if tipo_movimiento == "Débito" and not importe.startswith('-'):
+                        importe_num = -importe_num
+                except ValueError:
+                    importe_num = 0
+                    tipo_movimiento = "Indeterminado"
+                
+                # Procesa el saldo
+                saldo = saldo.replace(".", "").replace(",", ".")
+                
+                # Extrae detalle (si existe)
+                detalle = ""
+                if "-" in descripcion and descripcion.count("-") >= 1:
+                    partes = descripcion.split("-", 1)
+                    descripcion = partes[0].strip()
+                    if len(partes) > 1:
+                        detalle = partes[1].strip()
+                
+                transacciones.append({
+                    "fecha": ultima_fecha,
+                    "descripcion": descripcion,
+                    "detalle": detalle,
+                    "importe": importe_num,
+                    "saldo": float(saldo),
+                    "tipo_movimiento": tipo_movimiento
+                })
                 "saldo": float(saldo),
                 "tipo_movimiento": tipo_movimiento
             })
@@ -202,11 +264,14 @@ def guardar_excel(transacciones, ruta_salida):
         try:
             # Intenta varios formatos de fecha
             for formato in ["%d-%m-%y", "%d/%m/%Y"]:
+            for formato in ["%d-%m-%y", "%d/%m/%Y"]:
                 try:
                     return datetime.strptime(fecha_str, formato).strftime("%d/%m/%Y")
                 except:
+                except:
                     continue
             return fecha_str
+        except:
         except:
             return fecha_str
     
@@ -275,4 +340,5 @@ def main():
             st.error("❌ No se pudo extraer texto del PDF")
 
 if __name__ == "__main__":
+    main()
     main()
