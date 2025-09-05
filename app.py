@@ -46,62 +46,58 @@ def procesar_extracto_provincia(texto):
 
 def procesar_extracto_galicia(texto):
     """Procesa el texto del extracto del Banco Galicia y extrae las transacciones"""
-    # Patrón para capturar la estructura completa de las líneas
-    patron = r"(\d{2}/\d{2}/\d{2})\s+(.*?)(?:\s+(\w+\d+))?\s+([\d.,]+)?\s+([\d.,]+)?\s+([\d.,]+)"
+    # Patrón mejorado basado en el formato exacto del extracto
+    patron = r"(\d{2}/\d{2}/\d{2})\s+(.*?)(?:\s+(\w+\d*))?\s*([\d.,]+)?\s*([\d.,]+)?\s+([\d.,]+)"
     
     transacciones = []
     lineas = texto.split('\n')
-    ultima_fecha = None
-    descripcion_actual = []
+    descripcion_actual = None
     
     for linea in lineas:
         linea = linea.strip()
         if not linea:
             continue
-        
-        # Intenta encontrar líneas de transacciones
+            
         coincidencia = re.search(patron, linea)
         
         if coincidencia:
-            # Si tenemos una descripción pendiente, procesamos la transacción anterior
-            if descripcion_actual and ultima_fecha:
-                procesar_transaccion_pendiente(transacciones, ultima_fecha, descripcion_actual)
-                descripcion_actual = []
-            
             fecha, descripcion, origen, credito, debito, saldo = coincidencia.groups()
             
-            # Limpia y procesa los valores
-            descripcion = descripcion.strip()
-            saldo = saldo.replace(".", "").replace(",", ".")
+            # Si hay una descripción pendiente de la línea anterior
+            if descripcion_actual:
+                descripcion = f"{descripcion_actual} {descripcion}"
+                descripcion_actual = None
             
-            # Determina el importe y tipo de movimiento
-            importe = None
-            if credito and credito.strip():
-                importe = float(credito.replace(".", "").replace(",", "."))
-                tipo_movimiento = "Crédito"
-            elif debito and debito.strip():
-                importe = -float(debito.replace(".", "").replace(",", "."))
-                tipo_movimiento = "Débito"
-            
-            if importe is not None:
+            # Procesar importes
+            try:
+                saldo = float(saldo.replace(".", "").replace(",", "."))
+                
+                if credito and credito.strip():
+                    importe = float(credito.replace(".", "").replace(",", "."))
+                    tipo_movimiento = "Crédito"
+                elif debito and debito.strip():
+                    importe = -float(debito.replace(".", "").replace(",", "."))
+                    tipo_movimiento = "Débito"
+                else:
+                    continue
+                
                 transacciones.append({
                     "fecha": fecha,
-                    "descripcion": descripcion,
+                    "descripcion": descripcion.strip(),
                     "origen": origen if origen else "",
                     "importe": importe,
-                    "saldo": float(saldo),
+                    "saldo": saldo,
                     "tipo_movimiento": tipo_movimiento
                 })
-            
-            ultima_fecha = fecha
+            except (ValueError, AttributeError):
+                # Si la línea tiene fecha pero no podemos procesar los números,
+                # probablemente sea una descripción multilínea
+                descripcion_actual = descripcion
         else:
-            # Si la línea no coincide con el patrón, podría ser parte de una descripción
-            if ultima_fecha and linea:
-                descripcion_actual.append(linea)
-    
-    # Procesar última transacción pendiente si existe
-    if descripcion_actual and ultima_fecha:
-        procesar_transaccion_pendiente(transacciones, ultima_fecha, descripcion_actual)
+            # Si la línea no coincide con el patrón y hay una transacción anterior
+            if transacciones and linea:
+                # Agregar a la descripción de la última transacción
+                transacciones[-1]["descripcion"] = f'{transacciones[-1]["descripcion"]} {linea.strip()}'
     
     return transacciones
 
