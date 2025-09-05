@@ -46,32 +46,33 @@ def procesar_extracto_provincia(texto):
 
 def procesar_extracto_galicia(texto):
     """Procesa el texto del extracto del Banco Galicia y extrae las transacciones"""
-    # Patrón mejorado basado en el formato exacto del extracto
-    patron = r"(\d{2}/\d{2}/\d{2})\s+(.*?)(?:\s+(\w+\d*))?\s*([\d.,]+)?\s*([\d.,]+)?\s+([\d.,]+)"
+    # Patrón ajustado para capturar exactamente: fecha, descripción, origen, crédito, débito, saldo
+    patron = r"(\d{2}/\d{2}/\d{2})\s+([\w\s\-.]+?)(?:\s{2,}|\t)(?:(\w+\d*)\s+)?(?:([\d.,]+)\s+)?([\d.,]+)?\s+([\d.,]+)"
     
     transacciones = []
     lineas = texto.split('\n')
-    descripcion_actual = None
+    descripcion_actual = []
     
     for linea in lineas:
         linea = linea.strip()
-        if not linea:
+        if not linea or linea.startswith('Fecha') or linea.startswith('Movimientos'):
             continue
             
         coincidencia = re.search(patron, linea)
         
         if coincidencia:
+            # Si hay descripción pendiente y transacciones previas, agrégala a la última transacción
+            if descripcion_actual and transacciones:
+                transacciones[-1]["descripcion"] = f"{transacciones[-1]['descripcion']} {' '.join(descripcion_actual)}"
+                descripcion_actual = []
+            
             fecha, descripcion, origen, credito, debito, saldo = coincidencia.groups()
             
-            # Si hay una descripción pendiente de la línea anterior
-            if descripcion_actual:
-                descripcion = f"{descripcion_actual} {descripcion}"
-                descripcion_actual = None
-            
-            # Procesar importes
             try:
+                # Limpieza y conversión de valores numéricos
                 saldo = float(saldo.replace(".", "").replace(",", "."))
                 
+                # Determinar si es crédito o débito
                 if credito and credito.strip():
                     importe = float(credito.replace(".", "").replace(",", "."))
                     tipo_movimiento = "Crédito"
@@ -89,15 +90,17 @@ def procesar_extracto_galicia(texto):
                     "saldo": saldo,
                     "tipo_movimiento": tipo_movimiento
                 })
-            except (ValueError, AttributeError):
-                # Si la línea tiene fecha pero no podemos procesar los números,
-                # probablemente sea una descripción multilínea
-                descripcion_actual = descripcion
+            except (ValueError, AttributeError) as e:
+                st.error(f"Error procesando línea: {linea}")
+                continue
         else:
-            # Si la línea no coincide con el patrón y hay una transacción anterior
-            if transacciones and linea:
-                # Agregar a la descripción de la última transacción
-                transacciones[-1]["descripcion"] = f'{transacciones[-1]["descripcion"]} {linea.strip()}'
+            # Si la línea no coincide con el patrón, podría ser parte de una descripción
+            if linea and not linea.isspace():
+                descripcion_actual.append(linea.strip())
+    
+    # Procesar última descripción pendiente si existe
+    if descripcion_actual and transacciones:
+        transacciones[-1]["descripcion"] = f"{transacciones[-1]['descripcion']} {' '.join(descripcion_actual)}"
     
     return transacciones
 
