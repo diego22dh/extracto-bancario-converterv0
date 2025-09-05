@@ -46,73 +46,70 @@ def procesar_extracto_provincia(texto):
 
 def procesar_extracto_galicia(texto):
     """Procesa el texto del extracto del Banco Galicia y extrae las transacciones"""
-    # Patrón más flexible para capturar diferentes formatos de líneas
-    patron = r"(\d{2}/\d{2}/(?:\d{2}|\d{4}))\s+(.*?)\s+([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)"
+    # Patrón para capturar la estructura completa de las líneas
+    patron = r"(\d{2}/\d{2}/\d{2})\s+(.*?)(?:\s+(\w+\d+))?\s+([\d.,]+)?\s+([\d.,]+)?\s+([\d.,]+)"
     
     transacciones = []
     lineas = texto.split('\n')
     ultima_fecha = None
-    descripcion_completa = ""
+    descripcion_actual = []
     
     for linea in lineas:
         linea = linea.strip()
         if not linea:
             continue
-            
+        
         # Intenta encontrar líneas de transacciones
         coincidencia = re.search(patron, linea)
         
         if coincidencia:
-            fecha, descripcion, importe, saldo = coincidencia.groups()
+            # Si tenemos una descripción pendiente, procesamos la transacción anterior
+            if descripcion_actual and ultima_fecha:
+                procesar_transaccion_pendiente(transacciones, ultima_fecha, descripcion_actual)
+                descripcion_actual = []
             
-            # Guarda la última fecha válida
-            ultima_fecha = fecha
+            fecha, descripcion, origen, credito, debito, saldo = coincidencia.groups()
             
-            # Combina con la descripción acumulada si existe
-            if descripcion_completa:
-                descripcion = f"{descripcion_completa} {descripcion}"
-                descripcion_completa = ""
-            
-            # Normalizar fecha
-            if len(fecha.split('/')[2]) == 2:
-                fecha = fecha.replace('/', '-')
-            
-            # Limpia y normaliza la descripción
-            descripcion = re.sub(r'\s+', ' ', descripcion.strip())
-            
-            # Procesa importes
-            importe = importe.replace(".", "").replace(",", ".")
+            # Limpia y procesa los valores
+            descripcion = descripcion.strip()
             saldo = saldo.replace(".", "").replace(",", ".")
             
-            try:
-                importe_num = float(importe)
-                saldo_num = float(saldo)
-                tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
-                
-                # Extrae detalle si existe
-                detalle = ""
-                if " - " in descripcion:
-                    partes = descripcion.split(" - ", 1)
-                    descripcion = partes[0].strip()
-                    detalle = partes[1].strip() if len(partes) > 1 else ""
-                
+            # Determina el importe y tipo de movimiento
+            importe = None
+            if credito and credito.strip():
+                importe = float(credito.replace(".", "").replace(",", "."))
+                tipo_movimiento = "Crédito"
+            elif debito and debito.strip():
+                importe = -float(debito.replace(".", "").replace(",", "."))
+                tipo_movimiento = "Débito"
+            
+            if importe is not None:
                 transacciones.append({
                     "fecha": fecha,
                     "descripcion": descripcion,
-                    "detalle": detalle,
-                    "importe": importe_num,
-                    "saldo": saldo_num,
+                    "origen": origen if origen else "",
+                    "importe": importe,
+                    "saldo": float(saldo),
                     "tipo_movimiento": tipo_movimiento
                 })
-            except ValueError:
-                continue
+            
+            ultima_fecha = fecha
         else:
-            # Si la línea no coincide con el patrón pero tiene contenido,
-            # podría ser una descripción adicional
+            # Si la línea no coincide con el patrón, podría ser parte de una descripción
             if ultima_fecha and linea:
-                descripcion_completa += " " + linea
+                descripcion_actual.append(linea)
+    
+    # Procesar última transacción pendiente si existe
+    if descripcion_actual and ultima_fecha:
+        procesar_transaccion_pendiente(transacciones, ultima_fecha, descripcion_actual)
     
     return transacciones
+
+def procesar_transaccion_pendiente(transacciones, fecha, descripcion_actual):
+    """Procesa una transacción pendiente con descripción multilínea"""
+    if transacciones and transacciones[-1]["fecha"] == fecha:
+        # Agregar las líneas adicionales a la descripción de la última transacción
+        transacciones[-1]["descripcion"] += " " + " ".join(descripcion_actual)
 
 def guardar_excel(transacciones, ruta_salida):
     """Guarda las transacciones en un archivo Excel"""
