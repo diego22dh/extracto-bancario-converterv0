@@ -46,21 +46,32 @@ def procesar_extracto_provincia(texto):
 
 def procesar_extracto_galicia(texto):
     """Procesa el texto del extracto del Banco Galicia y extrae las transacciones"""
-    patron = r"(\d{2}/\d{2}/\d{2,4})\s+(.*?)\s+([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)"
+    # Patrón más flexible para capturar diferentes formatos de líneas
+    patron = r"(\d{2}/\d{2}/(?:\d{2}|\d{4}))\s+(.*?)\s+([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*([-]?\d{1,3}(?:\.\d{3})*(?:,\d{2})?)"
     
     transacciones = []
     lineas = texto.split('\n')
+    ultima_fecha = None
+    descripcion_completa = ""
     
     for linea in lineas:
-        # Limpiar la línea
         linea = linea.strip()
         if not linea:
             continue
             
         # Intenta encontrar líneas de transacciones
         coincidencia = re.search(patron, linea)
+        
         if coincidencia:
             fecha, descripcion, importe, saldo = coincidencia.groups()
+            
+            # Guarda la última fecha válida
+            ultima_fecha = fecha
+            
+            # Combina con la descripción acumulada si existe
+            if descripcion_completa:
+                descripcion = f"{descripcion_completa} {descripcion}"
+                descripcion_completa = ""
             
             # Normalizar fecha
             if len(fecha.split('/')[2]) == 2:
@@ -75,25 +86,31 @@ def procesar_extracto_galicia(texto):
             
             try:
                 importe_num = float(importe)
+                saldo_num = float(saldo)
                 tipo_movimiento = "Crédito" if importe_num > 0 else "Débito"
+                
+                # Extrae detalle si existe
+                detalle = ""
+                if " - " in descripcion:
+                    partes = descripcion.split(" - ", 1)
+                    descripcion = partes[0].strip()
+                    detalle = partes[1].strip() if len(partes) > 1 else ""
+                
+                transacciones.append({
+                    "fecha": fecha,
+                    "descripcion": descripcion,
+                    "detalle": detalle,
+                    "importe": importe_num,
+                    "saldo": saldo_num,
+                    "tipo_movimiento": tipo_movimiento
+                })
             except ValueError:
-                continue  # Salta líneas con importes inválidos
-            
-            # Extrae detalle si existe
-            detalle = ""
-            if " - " in descripcion:
-                partes = descripcion.split(" - ", 1)
-                descripcion = partes[0].strip()
-                detalle = partes[1].strip() if len(partes) > 1 else ""
-            
-            transacciones.append({
-                "fecha": fecha,
-                "descripcion": descripcion,
-                "detalle": detalle,
-                "importe": importe_num,
-                "saldo": float(saldo),
-                "tipo_movimiento": tipo_movimiento
-            })
+                continue
+        else:
+            # Si la línea no coincide con el patrón pero tiene contenido,
+            # podría ser una descripción adicional
+            if ultima_fecha and linea:
+                descripcion_completa += " " + linea
     
     return transacciones
 
